@@ -31,13 +31,12 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # Top-tier model pool for random selection + fallback order
 # (Current Gemini models as of Oct 2026)
 TOP_TIER_MODELS = [
-    "gemini-3.8-flash",
-    "gemini-2.5-flash",
-    "gemini-3.1-pro-preview",
-    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash",       # most reliable on this key/Horizon path
+    "gemini-3.8-flash",       # preferred when it responds; can timeout
+    "gemini-3.1-pro-preview", # fallback for harder tasks
 ]
 
-CHEAP_COMPRESS_MODEL = "gemini-2.5-flash-lite"
+CHEAP_COMPRESS_MODEL = "gemini-2.5-flash"
 
 mcp = FastMCP(
     name="ThreadForge",
@@ -332,7 +331,7 @@ def chat(
     return (
         f"**Thread ID:** `{thread_id}`\n"
         f"**Model:** `{used_model}`\n"
-        f"**Server:** `v0.1.2`\n\n"
+        f"**Server:** `v0.1.3`\n\n"
         f"{reply}\n\n"
         f"---\n*Continue this conversation by calling `chat` again with the same thread_id.*"
     )
