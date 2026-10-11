@@ -43,7 +43,11 @@ mcp = FastMCP(
     instructions=(
         "You are ThreadForge, a persistent multi-model chatbot MCP server. "
         "Use the chat tool for conversations. Always continue existing threads "
-        "when a thread_id is provided. Save important artifacts deliberately."
+        "when a thread_id is provided. "
+        "Artifacts are shared memory: use list_artifacts, get_artifact, "
+        "save_artifact, update_artifact, and delete_artifact so both you and "
+        "the host agent can see, edit, and remove the same files without "
+        "needing direct GitHub access."
     ),
 )
 
@@ -93,6 +97,37 @@ def _gh_put_file(path: str, content: str, message: str, sha: Optional[str] = Non
     with httpx.Client(timeout=30) as client:
         r = client.put(url, headers=_gh_headers(), json=body)
         r.raise_for_status()
+
+
+def _gh_delete_file(path: str, message: str, sha: str) -> None:
+    url = f"{GITHUB_API}/repos/{OWNER}/{STORAGE_REPO}/contents/{path}"
+    body = {"message": message, "sha": sha}
+    with httpx.Client(timeout=30) as client:
+        r = client.request("DELETE", url, headers=_gh_headers(), json=body)
+        r.raise_for_status()
+
+
+def _gh_list_dir(path: str) -> list[dict]:
+    """List files/dirs at path. Returns [] if missing."""
+    url = f"{GITHUB_API}/repos/{OWNER}/{STORAGE_REPO}/contents/{path}"
+    with httpx.Client(timeout=30) as client:
+        r = client.get(url, headers=_gh_headers())
+        if r.status_code == 404:
+            return []
+        r.raise_for_status()
+        data = r.json()
+        return data if isinstance(data, list) else []
+
+
+def _artifact_filename(kind: str, title: str) -> str:
+    safe_title = "".join(c if c.isalnum() or c in "-_ " else "_" for c in title)[:80]
+    return f"{kind}_{safe_title.replace(' ', '_')}.md"
+
+
+def _artifact_path(thread_id: str, filename: str) -> str:
+    # allow either bare filename or full relative path under artifacts/
+    name = filename.split("/")[-1]
+    return _thread_path(thread_id, f"artifacts/{name}")
 
 
 def _thread_path(thread_id: str, filename: str) -> str:
@@ -331,7 +366,7 @@ def chat(
     return (
         f"**Thread ID:** `{thread_id}`\n"
         f"**Model:** `{used_model}`\n"
-        f"**Server:** `v0.1.3`\n\n"
+        f"**Server:** `v0.1.4`\n\n"
         f"{reply}\n\n"
         f"---\n*Continue this conversation by calling `chat` again with the same thread_id.*"
     )
@@ -406,16 +441,116 @@ def save_artifact(
     kind: str = "note",
 ) -> str:
     """
-    Deliberately save an artifact (note, code, decision, reference, etc.)
-    inside the thread's artifacts/ folder.
+    Create or overwrite an artifact (note, code, decision, reference, etc.)
+    inside the thread's artifacts/ folder. Returns the filename so you can
+    get/update/delete it later without GitHub access.
     """
-    safe_title = "".join(c if c.isalnum() or c in "-_ " else "_" for c in title)[:80]
-    filename = f"{kind}_{safe_title.replace(' ', '_')}.md"
-    path = _thread_path(thread_id, f"artifacts/{filename}")
+    filename = _artifact_filename(kind, title)
+    path = _artifact_path(thread_id, filename)
+    existing = _gh_get_file(path)
+    sha = existing["sha"] if existing else None
+    body = (
+        f"# {title}\n\n"
+        f"Kind: {kind}\n"
+        f"Thread: {thread_id}\n"
+        f"Filename: {filename}\n"
+        f"Updated: {datetime.now(timezone.utc).isoformat()}\n\n"
+        f"{content}\n"
+    )
+    _gh_put_file(path, body, f"ThreadForge: save artifact {filename} in {thread_id}", sha=sha)
+    action = "updated" if sha else "created"
+    return f"Artifact {action}: `{filename}` (thread `{thread_id}`). Use get_artifact / update_artifact / delete_artifact with this filename."
 
-    body = f"# {title}\n\nKind: {kind}\nThread: {thread_id}\n\n{content}\n"
-    _gh_put_file(path, body, f"ThreadForge: save artifact {title} in {thread_id}")
-    return f"Artifact saved: `{path}`"
+
+@mcp.tool()
+def list_artifacts(thread_id: str) -> str:
+    """
+    List all artifacts stored for a thread. Both host agents and ThreadForge
+    can call this — no direct GitHub access required.
+    """
+    items = _gh_list_dir(_thread_path(thread_id, "artifacts"))
+    files = [i["name"] for i in items if i.get("type") == "file"]
+    if not files:
+        return f"No artifacts yet for thread `{thread_id}`. Use save_artifact to create one."
+    lines = [f"# Artifacts for thread `{thread_id}`", ""]
+    for name in sorted(files):
+        lines.append(f"- `{name}`")
+    lines.append("")
+    lines.append("Use get_artifact(thread_id, filename) to read one.")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def get_artifact(thread_id: str, filename: str) -> str:
+    """
+    Read the full content of one artifact by filename
+    (e.g. note_My_Title.md from list_artifacts).
+    """
+    path = _artifact_path(thread_id, filename)
+    data = _gh_get_file(path)
+    if data is None:
+        return (
+            f"Artifact `{filename}` not found in thread `{thread_id}`. "
+            f"Call list_artifacts to see available names."
+        )
+    return data["content"]
+
+
+@mcp.tool()
+def update_artifact(
+    thread_id: str,
+    filename: str,
+    content: str,
+    title: Optional[str] = None,
+) -> str:
+    """
+    Replace the body of an existing artifact. Keeps the same filename.
+    Optionally refresh the title line. Fails clearly if the file does not exist.
+    """
+    path = _artifact_path(thread_id, filename)
+    existing = _gh_get_file(path)
+    if existing is None:
+        return (
+            f"Cannot update: `{filename}` not found in thread `{thread_id}`. "
+            f"Use save_artifact to create it, or list_artifacts to check names."
+        )
+    # Infer kind from filename prefix (kind_rest.md)
+    base = filename[:-3] if filename.endswith(".md") else filename
+    kind = base.split("_", 1)[0] if "_" in base else "note"
+    display_title = title or base.split("_", 1)[-1].replace("_", " ")
+    body = (
+        f"# {display_title}\n\n"
+        f"Kind: {kind}\n"
+        f"Thread: {thread_id}\n"
+        f"Filename: {filename}\n"
+        f"Updated: {datetime.now(timezone.utc).isoformat()}\n\n"
+        f"{content}\n"
+    )
+    _gh_put_file(
+        path,
+        body,
+        f"ThreadForge: update artifact {filename} in {thread_id}",
+        sha=existing["sha"],
+    )
+    return f"Artifact updated: `{filename}` in thread `{thread_id}`."
+
+
+@mcp.tool()
+def delete_artifact(thread_id: str, filename: str) -> str:
+    """
+    Permanently delete an artifact from a thread (recoverable only from Git history).
+    """
+    path = _artifact_path(thread_id, filename)
+    existing = _gh_get_file(path)
+    if existing is None:
+        return f"Artifact `{filename}` not found in thread `{thread_id}` — nothing to delete."
+    _gh_delete_file(
+        path,
+        f"ThreadForge: delete artifact {filename} in {thread_id}",
+        sha=existing["sha"],
+    )
+    return f"Artifact deleted: `{filename}` from thread `{thread_id}`."
+
 
 
 @mcp.tool()
