@@ -331,7 +331,8 @@ def chat(
 
     return (
         f"**Thread ID:** `{thread_id}`\n"
-        f"**Model:** `{used_model}`\n\n"
+        f"**Model:** `{used_model}`\n"
+        f"**Server:** `v0.1.2`\n\n"
         f"{reply}\n\n"
         f"---\n*Continue this conversation by calling `chat` again with the same thread_id.*"
     )
