@@ -153,27 +153,30 @@ def save_thread(thread: dict) -> None:
         sha=msg_sha,
     )
 
-    # human-readable markdown (create or update)
-    md_lines = [
-        f"# Thread {thread_id}",
-        f"Created: {meta.get('created_at', '')}",
-        f"Updated: {now}",
-        "",
-    ]
-    for m in messages:
-        role = m.get("role", "unknown").upper()
-        md_lines.append(f"## {role}")
-        md_lines.append(m.get("content", ""))
-        md_lines.append("")
-    md_path = _thread_path(thread_id, "conversation.md")
-    md_existing = _gh_get_file(md_path)
-    md_sha = md_existing["sha"] if md_existing else None
-    _gh_put_file(
-        md_path,
-        "\n".join(md_lines),
-        f"ThreadForge: update conversation.md {thread_id}",
-        sha=md_sha,
-    )
+    # human-readable markdown (best-effort; don't fail the whole save)
+    try:
+        md_lines = [
+            f"# Thread {thread_id}",
+            f"Created: {meta.get('created_at', '')}",
+            f"Updated: {now}",
+            "",
+        ]
+        for m in messages:
+            role = m.get("role", "unknown").upper()
+            md_lines.append(f"## {role}")
+            md_lines.append(m.get("content", ""))
+            md_lines.append("")
+        md_path = _thread_path(thread_id, "conversation.md")
+        md_existing = _gh_get_file(md_path)
+        md_sha = md_existing["sha"] if md_existing else None
+        _gh_put_file(
+            md_path,
+            "\n".join(md_lines),
+            f"ThreadForge: update conversation.md {thread_id}",
+            sha=md_sha,
+        )
+    except Exception:
+        pass  # messages.json + metadata are the source of truth
 
     # restore for caller
     thread["messages"] = messages
