@@ -41,8 +41,14 @@ uv run mcp dev server.py
 | `chat` | Main conversation entrypoint (message + optional thread_id + optional model) |
 | `list_threads` | List recent threads |
 | `get_thread` | Fetch history / summary of a thread |
-| `save_artifact` | Let the AI deliberately store notes, code, decisions, etc. |
-| `set_model_preference` | Per-thread or global model preference |
+| `save_artifact` | Create/overwrite a note, code snippet, decision, etc. |
+| `list_artifacts` | List all artifacts for a thread |
+| `get_artifact` | Read one artifact by filename |
+| `update_artifact` | Replace the body of an existing artifact |
+| `delete_artifact` | Remove an artifact |
+| `set_model_preference` | Per-thread model preference |
+
+Artifacts are shared memory: **host agents** (Grok, Claude, etc. connected to this MCP) and **ThreadForge itself** both call the same tools. Neither side needs direct GitHub access to use them. Storage remains the `save-data` repo under `Chatbot MCP data/{thread_id}/artifacts/`.
 
 ## Storage layout (in `save-data` repo)
 
