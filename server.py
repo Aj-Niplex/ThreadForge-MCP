@@ -29,14 +29,15 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Top-tier model pool for random selection + fallback order
-# (Gemini models first because user is bringing Gemini API)
+# (Current Gemini models as of Oct 2026)
 TOP_TIER_MODELS = [
+    "gemini-3.8-flash",
     "gemini-2.5-flash",
+    "gemini-3.1-pro-preview",
     "gemini-2.5-pro",
-    "gemini-2.0-flash",
 ]
 
-CHEAP_COMPRESS_MODEL = "gemini-2.0-flash"
+CHEAP_COMPRESS_MODEL = "gemini-2.5-flash-lite"
 
 mcp = FastMCP(
     name="ThreadForge",
@@ -152,7 +153,7 @@ def save_thread(thread: dict) -> None:
         sha=msg_sha,
     )
 
-    # human-readable markdown
+    # human-readable markdown (create or update)
     md_lines = [
         f"# Thread {thread_id}",
         f"Created: {meta.get('created_at', '')}",
@@ -164,10 +165,14 @@ def save_thread(thread: dict) -> None:
         md_lines.append(f"## {role}")
         md_lines.append(m.get("content", ""))
         md_lines.append("")
+    md_path = _thread_path(thread_id, "conversation.md")
+    md_existing = _gh_get_file(md_path)
+    md_sha = md_existing["sha"] if md_existing else None
     _gh_put_file(
-        _thread_path(thread_id, "conversation.md"),
+        md_path,
         "\n".join(md_lines),
         f"ThreadForge: update conversation.md {thread_id}",
+        sha=md_sha,
     )
 
     # restore for caller
